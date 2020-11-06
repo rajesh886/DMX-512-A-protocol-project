@@ -27,10 +27,12 @@
 #include "timer.h"
 #include "wait.h"
 
-
+//maximum length of the buffer
 #define N 1024
+
 #define MAX_CHARS 80
 #define MAX_FIELDS 8
+
 typedef struct _USER_DATA
 {
     char buffer[MAX_CHARS+1];
@@ -39,23 +41,36 @@ typedef struct _USER_DATA
     char fieldType[MAX_FIELDS];
 }USER_DATA;
 
-uint32_t data_table[512];
+
+uint32_t data_table[512];           //table for storing the data. max address is 512
 char str[100];
-uint32_t max;
-bool on;
+uint32_t max = 512;                 //maximum address
+bool on = false;
 bool poll_req = false;
 char txbuffer[N];
-uint8_t wr_idx = 0;
-uint8_t rd_idx = 0;
-//uint32_t hr;
-//uint32_t min;
-//uint32_t sec;
+uint32_t wr_idx = 0;
+uint32_t rd_idx = 0;
+uint32_t phase = 0;
+uint32_t rx_phase = 0;
+uint32_t n=0;
+uint32_t mode = 0;
+uint32_t add = 0;
+uint32_t data = 0;
 
 // Bitband aliases
-#define RED_LED      (*((volatile uint32_t *)(0x42000000 + (0x400253FC-0x40000000)*32 + 1*4)))
+#define RED_LED       (*((volatile uint32_t *)(0x42000000 + (0x400253FC-0x40000000)*32 + 1*4)))
+#define BLUE_LED      (*((volatile uint32_t *)(0x42000000 + (0x400253FC-0x40000000)*32 + 2*4)))
+#define GREEN_LED     (*((volatile uint32_t *)(0x42000000 + (0x400253FC-0x40000000)*32 + 3*4)))
+#define DE            (*((volatile uint32_t *)(0x42000000 + (0x400063FC-0x40000000)*32 + 7*4)))
+
 
 // PortF masks
 #define RED_LED_MASK 2
+#define BLUE_LED_MASK 4
+#define GREEN_LED_MASK 8
+
+// PORT C MASK
+#define DE_MASK 128
 
 // Initialize Hardware
 void initHw()
@@ -67,14 +82,22 @@ void initHw()
     // Note UART on port A must use APB
     SYSCTL_GPIOHBCTL_R = 0;
 
-    // Enable clocks
+    // Enable clocks on GPIO
     SYSCTL_RCGCGPIO_R = SYSCTL_RCGCGPIO_R5;
+    SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R2;
+    //Enable clocks on Timer
+    SYSCTL_RCGCTIMER_R |= SYSCTL_RCGCTIMER_R1;
     _delay_cycles(3);
 
     // Configure LED pins
-    GPIO_PORTF_DIR_R |= RED_LED_MASK;  // bits 1 is output
-    GPIO_PORTF_DR2R_R |= RED_LED_MASK; // set drive strength to 2mA (not needed since default configuration -- for clarity)
-    GPIO_PORTF_DEN_R |= RED_LED_MASK;  // enable LEDs
+    GPIO_PORTF_DIR_R |= RED_LED_MASK | BLUE_LED_MASK | GREEN_LED_MASK;  // bits 1 is output
+    GPIO_PORTF_DR2R_R |= RED_LED_MASK | BLUE_LED_MASK | GREEN_LED_MASK; // set drive strength to 2mA (not needed since default configuration -- for clarity)
+    GPIO_PORTF_DEN_R |= RED_LED_MASK | BLUE_LED_MASK | GREEN_LED_MASK;  // enable LEDs
+
+    //configure portc for Data enable pin
+    GPIO_PORTC_DIR_R |= DE_MASK;   //DE pin is output.
+    GPIO_PORTC_DR2R_R |= DE_MASK;  //set drive strength to 2mA.
+    GPIO_PORTC_DEN_R |= DE_MASK;    //use digital function
 }
 
 //This function receives characters from the user interface
@@ -302,13 +325,12 @@ void setMode(){
 }
 
 void setAdd(uint32_t mode_num, uint32_t add){
-    writeEeprom(1, mode_num);
-    writeEeprom(2, add);
+    writeEeprom(0, mode_num);
+    writeEeprom(1, add);
 }
 
 void displayUart0(char str[])
 {
-    //TO DO: write code to display the longer characters by the UART0.
     //buffer is full if wr_idx == rd_idx
     bool full;
     full = ((wr_idx+1) % N) == rd_idx;
@@ -317,13 +339,15 @@ void displayUart0(char str[])
         //write into the buffer until the char is null;
         while (str[wr_idx] != '\0')
         {
-           txbuffer[wr_idx] = str[wr_idx++];
+           txbuffer[wr_idx] = str[wr_idx];
+           wr_idx++;
         }
         if(UART0_FR_R & UART_FR_TXFE) //checking to see if the fifo is empty
         {
-           //putcUart0(txbuffer[rd_idx++]);
-           UART0_DR_R = txbuffer[rd_idx++] ;
+           UART0_DR_R = txbuffer[rd_idx] ;
+           rd_idx++;
         }
+
         UART0_IM_R |= UART_IM_TXIM;  //Turning on the interrupt for uart0Isr.
     }
 }
@@ -332,42 +356,123 @@ void uart0RxIsr()
 {
     if(UART0_FR_R & UART_FR_TXFE) //transition of fifo from non-empty to empty
     {
-//     //putcUart0(txbuffer[rd_idx++]);
-        rd_idx++;
         UART0_DR_R = txbuffer[rd_idx] ;
+        rd_idx++;
         if(rd_idx == wr_idx)
         {
             UART0_IM_R &= ~UART_IM_TXIM;
             rd_idx = 0;
             wr_idx=0;
         }
+     }
+}
 
-      }
+void dmxTX()
+{
+    DE = 1;                            // enabling the PC7 pin high
+    GPIO_PORTB_DATA_R &= 0xFD;       //transmitting break condition '0' for 176 us.
+    //D = 0;
+    //TIMER1_CTL_R |= TIMER_CTL_TAEN;
+    phase = 0;
+//    data = UART1_DR_R;
+//    if(data & UART_DR_BE){
+//            displayUart0("Break condition\r\n");
+//        }
+    initTimer1();
+    //waitMicrosecond(1760);
 }
 
 void Timer1Isr()
 {
-    TIMER1_TAILR_R = 480;
-    GPIO_PORTB_DATA_R = 1;
-    waitMicrosecond(12);
-    TIMER2_CTL_R &= ~TIMER_CTL_TAEN;
-    GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX;
-    UART1_DR_R = 0xF7;
-    if(UART0_FR_R & UART_FR_TXFE)
+    if(phase == 0)
     {
-        UART1_IM_R |= UART_IM_TXIM;
+        GPIO_PORTB_DATA_R |= 0x00000002;
+        //transmitting 1 for 12 us.
+        //D = 1;
+        TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+        TIMER1_TAILR_R = 480;
+        TIMER1_CTL_R |= TIMER_CTL_TAEN;
+        phase = 1;
+
+        //code and discard
+        //putsUart0("called isr");
     }
+    else if(phase == 1)
+    {
+        //Turning off timer
+        TIMER1_IMR_R &= ~TIMER_IMR_TATOIM;
+        TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+        TIMER1_TAILR_R = 7040;
+
+        //UART1 PCTL on
+        GPIO_PORTB_AFSEL_R |= UART_TX_MASK | UART_RX_MASK;
+        GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX;
+
+        //writing start code
+        //while (UART1_FR_R & UART_FR_TXFF);
+        UART1_DR_R = 0;
+
+        //turning on the interrupt for UART1Isr
+        UART1_IM_R |= UART_IM_TXIM;
+
+        //code and discard
+        //putsUart0("called isr1");
+        phase = 2;
+    }
+    TIMER1_ICR_R = TIMER_ICR_TATOCINT;
 }
 
 void uart1Isr()
 {
-    uint8_t n=0;
-    while(n!=max)
-    {
-       UART1_DR_R = data_table[n];
-       n++;
-    }
-    UART0_IM_R &= ~UART_IM_TXIM;
+    //if(UART1_MIS_R == UART_MIS_TXMIS)
+   // {
+        if((phase-2)<max)
+        {
+           while (UART1_FR_R & UART_FR_TXFF);
+           UART1_DR_R = data_table[phase-2];
+           phase++;
+           //UART1_ICR_R = UART_ICR_TXIC;                    //clear the uart interrupt
+        }
+        else
+        {
+            UART1_IM_R &= ~UART_IM_TXIM;
+            GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK | UART_RX_MASK);  // use peripheral to drive PB0, PB1
+            GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX);
+
+            while (UART1_FR_R & UART_FR_BUSY);
+            if (on)
+            {
+                DE = 0;
+               dmxTX();
+
+            }
+            //UART1_ICR_R = UART_ICR_TXIC;
+        }
+    //}
+//    else
+//    {
+//        data = UART1_DR_R;
+//        if(data & UART_DR_BE)
+//        {
+//            rx_phase = 0;
+//        }
+//        else
+//        {
+//            data_table[rx_phase] = data;
+//            rx_phase++;
+//        }
+//    }
+//    UART1_DR_R = data_table[n];
+//    n++;
+//    if(n==max)
+//    {
+//        //displayUart0("Data sending has been completed\r\n");
+//        //NVIC_EN0_R &= ~(1 << (INT_UART1 - 16));
+//        UART1_IM_R &= ~(UART_IM_RXIM | UART_IM_TXIM);
+//        n = 0;
+//        dmxTX();
+//    }
+
     //TO DO: This should be in a continuous loop
 }
 //-----------------------------------------------------------------------------
@@ -381,10 +486,46 @@ int main(void)
     initHw();
 
     initUart0();
+    setUart0BaudRate(115200, 40e6);
+
+    initUart1();
+    setUart1BaudRate(250000, 40e6);
 
     initEeprom();
 
-    setUart0BaudRate(115200, 40e6);
+
+    //Power on Flash by turning on and off of the on board Blue Led
+    BLUE_LED = 1;
+    waitMicrosecond(200000);
+    BLUE_LED = 0;
+    waitMicrosecond(200000);
+    BLUE_LED = 1;
+    waitMicrosecond(200000);
+    BLUE_LED = 0;
+
+    mode = readEeprom(0);
+    if(mode == 0xFFFFFFFF){
+        displayUart0("Device Mode entered\r\n");
+        add = readEeprom(1);
+        displayUart0("Add: ");
+        sprintf(str, "%d\n",add);
+        displayUart0(str);
+        displayUart0("\r\n");
+        if(add == 0xFFFFFFFF)
+        {
+            add = 1;
+        }
+        UART1_IM_R |= UART_IM_RXIM;
+    }
+
+    else if(mode == 1)
+    {
+        displayUart0("Controller mode was enetered\r\n");
+    }
+
+
+    //Turning off the data enable pin
+    DE = 0;
 
     while(true)
     {
@@ -405,8 +546,6 @@ int main(void)
            uint32_t add = getFieldInteger(&data, 1);
            uint32_t value = getFieldInteger(&data, 2);
            data_table[add]=value;
-           displayUart0("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\r\n");
-           //displayUart0("1234567891234567891234567890123456789012345678901234568");
            valid = true;
        }
 
@@ -415,7 +554,8 @@ int main(void)
            uint32_t add = getFieldInteger(&data, 1);
            uint32_t value = data_table[add];
            sprintf(str, "%d\n",value);
-           putsUart0(str);
+           displayUart0(str);
+
            valid = true;
        }
 
@@ -433,19 +573,23 @@ int main(void)
        {
            uint32_t val = getFieldInteger(&data, 1);
            max = val;
-           sprintf(str, "%d\n",max);
-           putsUart0(str);
+           //sprintf(str, "%d\n",max);
+           //putsUart0(str);
            valid = true;
        }
 
        if(isCommand(&data, "on", 0))
        {
            on = true;
+           //DE = 1;
+           dmxTX();
+           valid = true;
        }
 
        if(isCommand(&data, "off", 0))
        {
            on = false;
+           valid = true;
        }
 
        if(isCommand(&data, "poll", 1))
@@ -505,36 +649,22 @@ int main(void)
        if(isCommand(&data, "device", 1))
        {
            uint32_t addr = getFieldInteger(&data, 1);
-           setAdd(0, addr);
+           setAdd(0xFFFFFFFF, addr);
            valid = true;
        }
 
-//       uint32_t b = readEeprom(1);
-//       sprintf(str,"%d\n",b);
-//       putsUart0(str);
-//       uint32_t c = readEeprom(2);
-//       sprintf(str,"%d\n",c);
-//       putsUart0(str);
-
-//      Debugging code
-//       if(on){
-//           putsUart0("success\n");
+//       if(mode == 1)
+//       {
+//          if(on)
+//          {
+//             dmxTX();
+//          }
 //       }
 
-       if(isCommand(&data, "run",0))
-       {
-           initUart1();
-           setUart1BaudRate(250000, 40e6);
-           initTimer1();
-           GPIO_PORTB_DATA_R = 0;
-           TIMER2_CTL_R |= TIMER_CTL_TAEN;
-           waitMicrosecond(176);
-       }
-
-       putsUart0("\r\n");
+       displayUart0("\r\n");
 
        if(!valid)
-           putsUart0("Invalid Command\r\n");
+           displayUart0("Invalid Command\r\n");
 
      }
 }

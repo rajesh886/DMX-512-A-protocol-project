@@ -1,6 +1,3 @@
-// UART0 Library
-// Jason Losh
-
 //-----------------------------------------------------------------------------
 // Hardware Target
 //-----------------------------------------------------------------------------
@@ -21,15 +18,18 @@
 #ifndef UART1_H_
 #define UART1_H_
 
+//Data pin
+#define D            (*((volatile uint32_t *)(0x42000000 + (0x400053FC-0x40000000)*32 + 1*4)))
+
+// PortB masks
+#define UART_TX_MASK 2
+#define UART_RX_MASK 1
+
 //-----------------------------------------------------------------------------
 // Subroutines
 //-----------------------------------------------------------------------------
 
 void initUart1();
 void setUart1BaudRate(uint32_t baudRate, uint32_t fcyc);
-void putcUart1(char c);
-void putsUart1(char* str);
-char getcUart1();
-bool kbhitUart1();
 
 #endif

@@ -23,10 +23,6 @@
 #include "tm4c123gh6pm.h"
 #include "uart0.h"
 
-// PortA masks
-#define UART_TX_MASK 2
-#define UART_RX_MASK 1
-
 //-----------------------------------------------------------------------------
 // Global variables
 //-----------------------------------------------------------------------------
@@ -39,7 +35,7 @@
 void initUart0()
 {
     // Configure HW to work with 16 MHz XTAL, PLL enabled, system clock of 40 MHz
-    SYSCTL_RCC_R = SYSCTL_RCC_XTAL_16MHZ | SYSCTL_RCC_OSCSRC_MAIN | SYSCTL_RCC_USESYSDIV | (4 << SYSCTL_RCC_SYSDIV_S);
+    //SYSCTL_RCC_R = SYSCTL_RCC_XTAL_16MHZ | SYSCTL_RCC_OSCSRC_MAIN | SYSCTL_RCC_USESYSDIV | (4 << SYSCTL_RCC_SYSDIV_S);
 
     // Set GPIO ports to use APB (not needed since default configuration -- for clarity)
     SYSCTL_GPIOHBCTL_R = 0;
@@ -65,10 +61,9 @@ void initUart0()
     UART0_IBRD_R = 21;                                  // r = 40 MHz / (Nx115.2kHz), set floor(r)=21, where N=16
     UART0_FBRD_R = 45;                                  // round(fract(r)*64)=45
     UART0_LCRH_R = UART_LCRH_WLEN_8 | UART_LCRH_FEN;    // configure for 8N1 w/ 16-level FIFO
-    //UART0_IFLS_R |= UART_IFLS_TX1_8;
     UART0_CTL_R = UART_CTL_TXE | UART_CTL_RXE | UART_CTL_EOT| UART_CTL_UARTEN;
-    NVIC_EN0_R |= (1 << (INT_UART0-16));
-                                                        // enable TX, RX, and module
+                                                        // enable TX, RX, End of transmission and module
+    NVIC_EN0_R |= (1 << (INT_UART0-16));                //turn on interrupt for UART0
 }
 
 // Set baud rate as function of instruction cycle frequency
