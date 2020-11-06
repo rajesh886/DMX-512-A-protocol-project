@@ -52,7 +52,7 @@ uint32_t wr_idx = 0;
 uint32_t rd_idx = 0;
 uint32_t phase = 0;
 uint32_t rx_phase = 0;
-uint32_t n=0;
+
 uint32_t mode = 0;
 uint32_t add = 0;
 uint32_t data = 0;
@@ -87,6 +87,8 @@ void initHw()
     SYSCTL_RCGCGPIO_R |= SYSCTL_RCGCGPIO_R2;
     //Enable clocks on Timer
     SYSCTL_RCGCTIMER_R |= SYSCTL_RCGCTIMER_R1;
+    //Enable clock on PWM
+    SYSCTL_RCGCPWM_R |= SYSCTL_RCGCPWM_R1;
     _delay_cycles(3);
 
     // Configure LED pins
@@ -98,6 +100,46 @@ void initHw()
     GPIO_PORTC_DIR_R |= DE_MASK;   //DE pin is output.
     GPIO_PORTC_DR2R_R |= DE_MASK;  //set drive strength to 2mA.
     GPIO_PORTC_DEN_R |= DE_MASK;    //use digital function
+
+}
+
+void initPWM()
+{
+    GPIO_PORTF_AFSEL_R |= RED_LED_MASK | BLUE_LED_MASK | GREEN_LED_MASK;
+    GPIO_PORTF_PCTL_R &= GPIO_PCTL_PF1_M | GPIO_PCTL_PF2_M | GPIO_PCTL_PF3_M;
+    GPIO_PORTF_PCTL_R |= GPIO_PCTL_PF1_M1PWM5 | GPIO_PCTL_PF2_M1PWM6 | GPIO_PCTL_PF3_M1PWM7;
+    // Configure PWM module 1 to drive RGB
+    // RED   on M1PWM5 (PF1), M1PWM2b
+    // BLUE  on M1PWM6 (PF2), M1PWM3a
+    // GREEN on M1PWM7 (PF3), M1PWM3b
+    SYSCTL_SRPWM_R = SYSCTL_SRPWM_R1;
+    SYSCTL_SRPWM_R = 0;
+    PWM1_2_CTL_R = 0;
+    PWM1_3_CTL_R = 0;
+    PWM1_2_GENB_R = PWM_1_GENB_ACTCMPBD_ZERO | PWM_1_GENB_ACTLOAD_ONE;
+
+    PWM1_3_GENA_R = PWM_1_GENA_ACTCMPAD_ZERO | PWM_1_GENA_ACTLOAD_ONE;
+
+    PWM1_3_GENB_R = PWM_1_GENB_ACTCMPBD_ZERO | PWM_1_GENB_ACTLOAD_ONE;
+
+    PWM1_2_LOAD_R = 1024;
+    PWM1_3_LOAD_R = 1024;
+    PWM1_INVERT_R = PWM_INVERT_PWM5INV | PWM_INVERT_PWM6INV | PWM_INVERT_PWM7INV;
+
+    PWM1_2_CMPB_R = 0;
+    PWM1_3_CMPB_R = 0;
+    PWM1_3_CMPA_R = 0;
+
+    PWM1_2_CTL_R = PWM_1_CTL_ENABLE;
+    PWM1_3_CTL_R = PWM_1_CTL_ENABLE;
+    PWM1_ENABLE_R = PWM_ENABLE_PWM5EN | PWM_ENABLE_PWM6EN | PWM_ENABLE_PWM7EN;
+}
+
+void setRgbColor(uint16_t red, uint16_t green, uint16_t blue)
+{
+    PWM1_2_CMPB_R = red;
+    PWM1_3_CMPA_R = blue;
+    PWM1_3_CMPB_R = green;
 }
 
 //This function receives characters from the user interface
@@ -370,32 +412,20 @@ void uart0RxIsr()
 void dmxTX()
 {
     DE = 1;                            // enabling the PC7 pin high
-    GPIO_PORTB_DATA_R &= 0xFD;       //transmitting break condition '0' for 176 us.
-    //D = 0;
-    //TIMER1_CTL_R |= TIMER_CTL_TAEN;
+    GPIO_PORTB_DATA_R &= 0xFD;        //transmitting break condition '0' for 176 us.
     phase = 0;
-//    data = UART1_DR_R;
-//    if(data & UART_DR_BE){
-//            displayUart0("Break condition\r\n");
-//        }
     initTimer1();
-    //waitMicrosecond(1760);
 }
 
 void Timer1Isr()
 {
     if(phase == 0)
     {
-        GPIO_PORTB_DATA_R |= 0x00000002;
-        //transmitting 1 for 12 us.
-        //D = 1;
+        GPIO_PORTB_DATA_R |= 0x00000002;    //transmitting 1 for 12 us.
         TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
         TIMER1_TAILR_R = 480;
         TIMER1_CTL_R |= TIMER_CTL_TAEN;
         phase = 1;
-
-        //code and discard
-        //putsUart0("called isr");
     }
     else if(phase == 1)
     {
@@ -415,23 +445,20 @@ void Timer1Isr()
         //turning on the interrupt for UART1Isr
         UART1_IM_R |= UART_IM_TXIM;
 
-        //code and discard
-        //putsUart0("called isr1");
         phase = 2;
     }
-    TIMER1_ICR_R = TIMER_ICR_TATOCINT;
+    TIMER1_ICR_R = TIMER_ICR_TATOCINT;   //clearing the interrupt flag for timer
 }
 
 void uart1Isr()
 {
-    //if(UART1_MIS_R == UART_MIS_TXMIS)
-   // {
+    if(UART1_MIS_R & UART_MIS_TXMIS)
+    {
         if((phase-2)<max)
         {
            while (UART1_FR_R & UART_FR_TXFF);
            UART1_DR_R = data_table[phase-2];
            phase++;
-           //UART1_ICR_R = UART_ICR_TXIC;                    //clear the uart interrupt
         }
         else
         {
@@ -446,34 +473,32 @@ void uart1Isr()
                dmxTX();
 
             }
-            //UART1_ICR_R = UART_ICR_TXIC;
         }
-    //}
-//    else
-//    {
-//        data = UART1_DR_R;
-//        if(data & UART_DR_BE)
+    }
+    else
+    {
+        data = UART1_DR_R;
+        if(data & UART_DR_BE)
+        {
+            setRgbColor(data_table[add],data_table[add+1],data_table[add+2]);
+            rx_phase = 0;
+        }
+
+//        else if((data & 0xFF) == 0)
 //        {
 //            rx_phase = 0;
+//
 //        }
-//        else
-//        {
-//            data_table[rx_phase] = data;
-//            rx_phase++;
-//        }
-//    }
-//    UART1_DR_R = data_table[n];
-//    n++;
-//    if(n==max)
-//    {
-//        //displayUart0("Data sending has been completed\r\n");
-//        //NVIC_EN0_R &= ~(1 << (INT_UART1 - 16));
-//        UART1_IM_R &= ~(UART_IM_RXIM | UART_IM_TXIM);
-//        n = 0;
-//        dmxTX();
-//    }
+        else
+        {
 
-    //TO DO: This should be in a continuous loop
+            if((rx_phase)<max)
+            {
+               data_table[rx_phase] = data;
+               rx_phase++;
+            }
+        }
+    }
 }
 //-----------------------------------------------------------------------------
 // Main
@@ -505,22 +530,22 @@ int main(void)
 
     mode = readEeprom(0);
     if(mode == 0xFFFFFFFF){
-        displayUart0("Device Mode entered\r\n");
-        add = readEeprom(1);
-        displayUart0("Add: ");
-        sprintf(str, "%d\n",add);
-        displayUart0(str);
-        displayUart0("\r\n");
         if(add == 0xFFFFFFFF)
         {
             add = 1;
         }
+        initPWM();
+        GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
+        GPIO_PORTB_PCTL_R  |= GPIO_PCTL_PB0_U1RX;
         UART1_IM_R |= UART_IM_RXIM;
+        DE = 0;
+
+        displayUart0("Device Mode entered\r\n");
     }
 
     else if(mode == 1)
     {
-        displayUart0("Controller mode was enetered\r\n");
+        displayUart0("Controller mode was entered\r\n");
     }
 
 
@@ -546,6 +571,8 @@ int main(void)
            uint32_t add = getFieldInteger(&data, 1);
            uint32_t value = getFieldInteger(&data, 2);
            data_table[add]=value;
+//           displayUart0("ABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n");
+//           displayUart0("ABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n");
            valid = true;
        }
 
@@ -581,8 +608,10 @@ int main(void)
        if(isCommand(&data, "on", 0))
        {
            on = true;
-           //DE = 1;
-           dmxTX();
+           if(mode == 1)  //if the mode is controller
+           {
+             dmxTX();
+           }
            valid = true;
        }
 
@@ -651,15 +680,12 @@ int main(void)
            uint32_t addr = getFieldInteger(&data, 1);
            setAdd(0xFFFFFFFF, addr);
            valid = true;
+           add = readEeprom(1);
+           displayUart0("Add: ");
+           sprintf(str, "%d\n",add);
+           displayUart0(str);
+           displayUart0("\r\n");
        }
-
-//       if(mode == 1)
-//       {
-//          if(on)
-//          {
-//             dmxTX();
-//          }
-//       }
 
        displayUart0("\r\n");
 
