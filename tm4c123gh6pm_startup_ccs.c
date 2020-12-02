@@ -57,7 +57,9 @@ extern uint32_t __STACK_TOP;
 // To be added by user
 extern void uart0RxIsr();
 extern void Timer1Isr();
+extern void Timer2Isr();
 extern void uart1Isr();
+extern void hibernationIsr();
 
 //*****************************************************************************
 //
@@ -109,7 +111,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Timer 0 subtimer B
     Timer1Isr,                              // Timer 1 subtimer A
     IntDefaultHandler,                      // Timer 1 subtimer B
-    IntDefaultHandler,                      // Timer 2 subtimer A
+    Timer2Isr,                              // Timer 2 subtimer A
     IntDefaultHandler,                      // Timer 2 subtimer B
     IntDefaultHandler,                      // Analog Comparator 0
     IntDefaultHandler,                      // Analog Comparator 1
@@ -129,7 +131,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // CAN1
     0,                                      // Reserved
     0,                                      // Reserved
-    IntDefaultHandler,                      // Hibernate
+    hibernationIsr,                      // Hibernate
     IntDefaultHandler,                      // USB0
     IntDefaultHandler,                      // PWM Generator 3
     IntDefaultHandler,                      // uDMA Software Transfer

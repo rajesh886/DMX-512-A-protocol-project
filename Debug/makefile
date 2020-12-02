@@ -2,7 +2,7 @@
 # Automatically-generated file. Do not edit!
 ################################################################################
 
-CG_TOOL_ROOT := /Applications/ti/ccs930/ccs/tools/compiler/ti-cgt-arm_18.12.5.LTS
+CG_TOOL_ROOT := /Applications/ti/ccs/tools/compiler/ti-cgt-arm_20.2.1.LTS
 
 GEN_OPTS__FLAG := 
 GEN_CMDS__FLAG := 
@@ -11,6 +11,7 @@ ORDERED_OBJS += \
 "./eeprom.obj" \
 "./hibernation.obj" \
 "./main.obj" \
+"./polling.obj" \
 "./timer.obj" \
 "./tm4c123gh6pm_startup_ccs.obj" \
 "./uart0.obj" \
@@ -145,22 +146,22 @@ all: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 DMX-512-A-protcol.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 	@echo 'Building target: "$@"'
 	@echo 'Invoking: ARM Linker'
-	"/Applications/ti/ccs930/ccs/tools/compiler/ti-cgt-arm_18.12.5.LTS/bin/armcl" -mv7M4 --code_state=16 --float_support=FPv4SPD16 -me --define=ccs="ccs" --define=PART_TM4C123GH6PM -g --gcc --diag_warning=225 --diag_wrap=off --display_error_number --abi=eabi -z -m"DMX-512-A-protcol.map" --heap_size=0 --stack_size=4096 -i"/Applications/ti/ccs930/ccs/tools/compiler/ti-cgt-arm_18.12.5.LTS/lib" -i"/Applications/ti/ccs930/ccs/tools/compiler/ti-cgt-arm_18.12.5.LTS/include" --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="DMX-512-A-protcol_linkInfo.xml" --rom_model -o "DMX-512-A-protcol.out" $(ORDERED_OBJS)
+	"/Applications/ti/ccs/tools/compiler/ti-cgt-arm_20.2.1.LTS/bin/armcl" -mv7M4 --code_state=16 --float_support=FPv4SPD16 -me --define=ccs="ccs" --define=PART_TM4C123GH6PM -g --gcc --diag_warning=225 --diag_wrap=off --display_error_number --abi=eabi -z -m"DMX-512-A-protcol.map" --heap_size=0 --stack_size=4096 -i"/Applications/ti/ccs/tools/compiler/ti-cgt-arm_20.2.1.LTS/lib" -i"/Applications/ti/ccs/tools/compiler/ti-cgt-arm_20.2.1.LTS/include" --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="DMX-512-A-protcol_linkInfo.xml" --rom_model -o "DMX-512-A-protcol.out" $(ORDERED_OBJS)
 	@echo 'Finished building target: "$@"'
 	@echo ' '
 
 DMX-512-A-protcol.hex: $(EXE_OUTPUTS)
 	@echo 'Building files: $(strip $(EXE_OUTPUTS__QUOTED))'
 	@echo 'Invoking: ARM Hex Utility'
-	"/Applications/ti/ccs930/ccs/tools/compiler/ti-cgt-arm_18.12.5.LTS/bin/armhex"  -o "DMX-512-A-protcol.hex" $(EXE_OUTPUTS__QUOTED)
+	"/Applications/ti/ccs/tools/compiler/ti-cgt-arm_20.2.1.LTS/bin/armhex"  -o "DMX-512-A-protcol.hex" $(EXE_OUTPUTS__QUOTED)
 	@echo 'Finished building: $(strip $(EXE_OUTPUTS__QUOTED))'
 	@echo ' '
 
 # Other Targets
 clean:
 	-$(RM) $(BIN_OUTPUTS__QUOTED)$(EXE_OUTPUTS__QUOTED)
-	-$(RM) "eeprom.obj" "hibernation.obj" "main.obj" "timer.obj" "tm4c123gh6pm_startup_ccs.obj" "uart0.obj" "uart1.obj" "wait.obj" 
-	-$(RM) "eeprom.d" "hibernation.d" "main.d" "timer.d" "tm4c123gh6pm_startup_ccs.d" "uart0.d" "uart1.d" "wait.d" 
+	-$(RM) "eeprom.obj" "hibernation.obj" "main.obj" "polling.obj" "timer.obj" "tm4c123gh6pm_startup_ccs.obj" "uart0.obj" "uart1.obj" "wait.obj" 
+	-$(RM) "eeprom.d" "hibernation.d" "main.d" "polling.d" "timer.d" "tm4c123gh6pm_startup_ccs.d" "uart0.d" "uart1.d" "wait.d" 
 	-@echo 'Finished clean'
 	-@echo ' '
 
