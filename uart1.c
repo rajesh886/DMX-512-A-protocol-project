@@ -32,7 +32,7 @@ void initUart1()
     GPIO_PORTB_DIR_R &= ~UART_RX_MASK;                   // enable input on UART1 RX pin
     GPIO_PORTB_DR2R_R |= UART_TX_MASK;                  // set drive strength to 2mA (not needed since default configuration -- for clarity)
     GPIO_PORTB_DEN_R |= UART_TX_MASK | UART_RX_MASK;    // enable digital on UART1 pins
-    GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK | UART_RX_MASK);  // use peripheral to drive PB0, PB1
+    GPIO_PORTB_AFSEL_R |= ~(UART_TX_MASK | UART_RX_MASK);  // use peripheral to drive PB0, PB1
     GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_M | GPIO_PCTL_PB0_M); // clear bits 0-7
     GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX);
     //GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX;
@@ -42,8 +42,8 @@ void initUart1()
     UART1_CTL_R = 0;                                    // turn-off UART1 to allow safe programming
     UART1_CC_R = UART_CC_CS_SYSCLK;                     // use system clock (40 MHz)
     UART1_IBRD_R = 10;                                  // r = 40 MHz / (Nx250kHz)
-    UART1_FBRD_R = 00;
-    UART1_LCRH_R = UART_LCRH_WLEN_8 | UART_LCRH_STP2| UART_LCRH_FEN ;    // configure for 8N2 w/ 16-level FIFO
+    UART1_FBRD_R = 0;
+    UART1_LCRH_R = UART_LCRH_WLEN_8 | UART_LCRH_STP2;    // configure for 8N2 w/ 16-level FIFO
     UART1_CTL_R = UART_CTL_TXE | UART_CTL_RXE | UART_CTL_UARTEN | UART_CTL_EOT;
                                                         // enable TX, RX,module and end of transmission.
 

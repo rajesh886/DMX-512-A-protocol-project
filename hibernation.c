@@ -12,17 +12,29 @@ void initHibernationHW()
     SYSCTL_RCGCHIB_R |= SYSCTL_RCGCHIB_R0;
     _delay_cycles(3);
 
-    HIB_IM_R |= HIB_IM_WC;
-    HIB_CTL_R |= HIB_CTL_CLK32EN;
-    while(!(HIB_MIS_R & HIB_IM_WC));
-    //HIB_IM_R |= HIB_IM_RTCALT0  ;
-    HIB_CTL_R |= HIB_CTL_RTCEN ;
-    //NVIC_EN1_R |= (1 << (INT_HIBERNATE -16 - 32));
+    while(!(HIB_CTL_R & 0x80000000));
+
+    HIB_IM_R &= ~HIB_IM_WC;
+
+    HIB_CTL_R |= 0x00000040;
+
+    while(!(HIB_CTL_R & 0x80000000));
+
+    NVIC_EN1_R |= (1 << (INT_HIBERNATE - 16 - 32));
+
+    while(!(HIB_CTL_R & 0x80000000));
+
+    HIB_IM_R |= HIB_IM_RTCALT0;
+
+    while(!(HIB_CTL_R & 0x80000000));
+
+    HIB_CTL_R |= 0x00000041;
+
 }
 
 uint32_t getCurrentSeconds()
 {
-    uint32_t seconds = (HIB_RTCC_R);
+    uint32_t seconds = HIB_RTCC_R;
     return seconds;
 }
 
@@ -80,20 +92,29 @@ void setRTC(uint32_t N)
 {
     while(!(HIB_CTL_R & 0x80000000));
     HIB_RTCLD_R = N;
-    while(!(HIB_CTL_R & 0x80000000));
 }
 
-
-void addToSortedList(uint32_t n, uint32_t a, uint32_t v, uint32_t sortedArray[512][3])
+void setAlarm(uint32_t RTCALM)
 {
-   ArrayIndex = 0;
+    while(!(HIB_CTL_R & 0x80000000));
+    HIB_RTCM0_R = RTCALM;
+
+}
+
+void addToSortedList(uint32_t n, uint32_t a, uint32_t v, uint32_t sortedArray[4][3])
+{
+   //ArrayIndex = 0;
    sortedArray[ArrayIndex][0] = n;
    sortedArray[ArrayIndex][1] = a;
    sortedArray[ArrayIndex][2] = v;
    ArrayIndex++;
+   if(ArrayIndex == 4)
+   {
+       ArrayIndex = 0;
+   }
 }
 
-void sortArray(uint32_t sortedArray[512][3])
+void sortArray(uint32_t sortedArray[4][3])
 {
     uint32_t temp;
     uint32_t temp1;
@@ -101,9 +122,9 @@ void sortArray(uint32_t sortedArray[512][3])
     uint32_t i = 0;
     uint32_t j = 0;
 
-    for (i = 0; i < 512; ++i)
+    for (i = 0; i < 4; ++i)
     {
-      for (j = i + 1; j < 512; ++j)
+      for (j = i + 1; j < 4; ++j)
       {
           if ((sortedArray[i][0] > sortedArray[j][0]) && (sortedArray[i][0] != 0) && (sortedArray[j][0] != 0))
           {

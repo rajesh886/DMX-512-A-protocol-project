@@ -33,6 +33,8 @@ uint32_t calculateSeconds(uint32_t hor, uint32_t minu, uint32_t secs, uint32_t m
 
 void setRTC(uint32_t N);
 
+void setAlarm(uint32_t RTCALM);
+
 void addToSortedList(uint32_t n, uint32_t a, uint32_t v, uint32_t sortedArray[][]);
 
 void sortArray(uint32_t sortedArray[][]);

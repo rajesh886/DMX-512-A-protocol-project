@@ -26,7 +26,6 @@
 #include "uart1.h"
 #include "timer.h"
 #include "wait.h"
-#include "polling.h"
 
 //maximum length of the buffer
 #define N 1024
@@ -42,13 +41,18 @@ typedef struct _USER_DATA
     char fieldType[MAX_FIELDS];
 }USER_DATA;
 
-uint16_t LED_TIMEOUT_OFF = 10;
-uint16_t LED_TIMEOUT_ON = 10;
+uint8_t LED_ON_FLAG = 0;
+uint8_t LED_OFF_FLAG = 0;
+uint8_t GREEN_FLAG = 0;
+uint8_t GREEN_FLAG1 = 0;
+uint8_t LED_TIMEOUT_GREEN = 0;
+uint16_t LED_TIMEOUT_OFF = 0;
+uint16_t LED_TIMEOUT_ON = 0;
 uint32_t data_table[513];           //table for storing the data. max address is 512
 uint32_t poll_table[512];
 uint32_t device_address[512];
 char str[100];
-uint32_t max = 512;                 //maximum address
+uint32_t max = 513;                 //maximum address
 bool on = true;
 bool poll_req = false;
 char txbuffer[N];
@@ -58,6 +62,9 @@ uint32_t phase = 0;
 uint32_t rx_phase = 0;
 uint32_t last_phase = 0;
 uint32_t last_rx_phase = 0;
+bool polled = false;
+bool polledC = false;
+uint8_t receiver_phase = 0;
 
 uint32_t mode = 0;
 uint32_t add = 0;
@@ -65,7 +72,7 @@ uint32_t data = 0;
 uint32_t poll_data = 0;
 
 uint32_t n = 0;                 //global variable that stores the number of seconds.
-uint32_t sortedArray[512][3];   //sorted array to store the task in ascending order.
+uint32_t sortedArray[4][3];   //sorted array to store the task in ascending order.
 uint32_t RTCALM = 0;
 
 // Bitband aliases
@@ -162,6 +169,15 @@ void getsUart0(USER_DATA* data)
 
     char c;
     c = getcUart0();
+    if(mode == 1)
+    {
+        if(LED_OFF_FLAG == 0)
+        {
+            LED_TIMEOUT_ON = 1;
+            BLUE_LED = 0;
+            LED_OFF_FLAG = 1;
+        }
+    }
 
     if(c==127||c==8)  //checking if the character entered is DEL or backspace
     {
@@ -368,12 +384,6 @@ bool isCommand(USER_DATA* data, const char strCommand[], uint8_t minArguments)
   return false;
 }
 
-void req_poll(){
-    poll_req = true;
-
-    //TO DO: who clears bit
-}
-
 void setMode(){
     writeEeprom(0,1);
 }
@@ -411,15 +421,20 @@ void uart0RxIsr()
     if(UART0_FR_R & UART_FR_TXFE) //transition of fifo from non-empty to empty
     {
         UART0_DR_R = txbuffer[rd_idx] ;
-        if(mode == 1)
-        {
-            BLUE_LED = 1;
-            LED_TIMEOUT_OFF = 10;
-            initTimer2();
-        }
+//        if(mode == 1)
+//        {
+//            if(LED_OFF_FLAG == 0)
+//            {
+//                LED_TIMEOUT_ON = 10;
+//                BLUE_LED = 0;
+//                LED_OFF_FLAG = 1;
+//            }
+//            initTimer2();
+//        }
         rd_idx++;
         if(rd_idx == wr_idx)
         {
+            LED_OFF_FLAG = 0;
             UART0_IM_R &= ~UART_IM_TXIM;
             rd_idx = 0;
             wr_idx=0;
@@ -437,179 +452,238 @@ void dmxTX()
 
 void Timer1Isr()
 {
-    if(phase == 0)
+    if(mode == 1)
     {
-        D = 1;    //transmitting 1 for 12 us.
-        TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
-        TIMER1_TAILR_R = 480;
-        TIMER1_CTL_R |= TIMER_CTL_TAEN;
-        phase = 1;
+        if(phase == 0)
+        {
+            D = 1;    //transmitting 1 for 12 us.
+            TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+            TIMER1_TAILR_R = 480;
+            TIMER1_CTL_R |= TIMER_CTL_TAEN;
+            phase = 1;
+        }
+        else if(phase == 1)
+        {
+            //Turning off timer
+            TIMER1_IMR_R &= ~TIMER_IMR_TATOIM;
+            TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+            TIMER1_TAILR_R = 7040;
+
+            //UART1 AFSEL and PCTL on
+            //only transmit is enabled if the device is in the controller mode.
+            GPIO_PORTB_AFSEL_R |= UART_TX_MASK ;
+            GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX ;
+
+            //writing start code
+            if(!poll_req)
+            {
+              //GREEN_FLAG1 = 0;
+              UART1_DR_R = 0;
+            }
+
+            if(poll_req)
+            {
+                //GREEN_FLAG1 = 1;
+                while (UART1_FR_R & UART_FR_TXFF);
+                UART1_DR_R  = 0xF7;
+            }
+
+            //turning on the interrupt for UART1Isr
+            UART1_IM_R |= UART_IM_TXIM;
+
+            phase = 2;
+        }
+        TIMER1_ICR_R = TIMER_ICR_TATOCINT;   //clearing the interrupt flag for timer
     }
-    else if(phase == 1)
+    else if(mode == 0xFFFFFFFF && polled == true)
     {
-        //Turning off timer
-        TIMER1_IMR_R &= ~TIMER_IMR_TATOIM;
-        TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
-        TIMER1_TAILR_R = 7040;
-
-        //UART1 AFSEL and PCTL on
-        //only transmit is enabled if the device is in the controller mode.
-        GPIO_PORTB_AFSEL_R |= UART_TX_MASK | UART_RX_MASK;
-        GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX ;
-
-        //writing start code
-        if(!poll_req)
+        if(receiver_phase == 0)
         {
-          while (UART1_FR_R & UART_FR_TXFF);
-          UART1_DR_R = 0;
+            TIMER1_ICR_R = TIMER_ICR_TATOCINT;
+            DE = 1;
+            D = 0;
+            TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+            TIMER1_TAILR_R = 7040;
+            TIMER1_IMR_R |= TIMER_IMR_TATOIM;
+            TIMER1_CTL_R |= TIMER_CTL_TAEN;
+            receiver_phase = 1;
         }
-
-        if(poll_req)
+        else if(receiver_phase == 1)
         {
-            while (UART1_FR_R & UART_FR_TXFF);
-            UART1_DR_R  = 0xF7;
+            DE = 0;
+            TIMER1_IMR_R &= ~TIMER_IMR_TATOIM;
+            TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+            TIMER1_ICR_R = TIMER_ICR_TATOCINT;
+            GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
+            GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB0_U1RX;
+            UART1_IM_R |= UART_IM_RXIM;
         }
-
-        //turning on the interrupt for UART1Isr
-        UART1_IM_R |= UART_IM_TXIM;
-
-        phase = 2;
     }
-    TIMER1_ICR_R = TIMER_ICR_TATOCINT;   //clearing the interrupt flag for timer
+
+
 }
 
 void uart1Isr()
 {
     if(UART1_MIS_R & UART_MIS_TXMIS)
     {
-        if((phase-2)<max && !poll_req)
+        if(!polled)
         {
-           while (UART1_FR_R & UART_FR_TXFF);
-           UART1_DR_R = data_table[phase-2];
-           phase++;
-        }
-        else if((phase-2)<max && poll_req)
-        {
-            poll_table[last_phase] = 1;
-            while (UART1_FR_R & UART_FR_TXFF);
-            UART1_DR_R = poll_table[phase-2];
-            phase++;
-
-            if((phase-2) == 512)
+            if(((phase-2)< (max+1)) && !poll_req)
             {
-                //waitMicrosecond(8);
-                GPIO_PORTB_AFSEL_R &= ~UART_TX_MASK;
-                GPIO_PORTB_PCTL_R &= ~GPIO_PCTL_PB1_U1TX;
-                GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
-                GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB0_U1RX ;
-                DE = 0;
-                waitMicrosecond(24);
+               while (UART1_FR_R & UART_FR_TXFF);
+               UART1_DR_R = data_table[phase-2];
+               phase++;
+            }
+            else if(((phase-2) < (max+1)) && poll_req)
+            {
                 while (UART1_FR_R & UART_FR_TXFF);
-                //while (UART0_FR_R & UART_FR_RXFE);
-                poll_data = UART1_DR_R;
-                if(poll_data & UART_DR_BE)
+                UART1_DR_R = poll_table[phase-2];
+                phase++;
+
+                if((phase-2) == 513)
                 {
-                    device_address[last_phase] = last_phase;
-                    //sprintf(str,"%d\r\n",device_address[last_phase]);
-                    //displayUart0(str);
+                    UART1_ECR_R = 0;
+                    polledC = true;
+                    GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK);
+                    GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX);
+                    UART1_IM_R &= ~UART_IM_TXIM;
+                    UART1_ICR_R |= UART_ICR_TXIC;
+                    GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
+                    GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB0_U1RX;
+                    UART1_IM_R |= UART_IM_RXIM;
+
                 }
-                GPIO_PORTB_AFSEL_R |= UART_TX_MASK;
-                GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX;
-                GPIO_PORTB_AFSEL_R &= ~UART_RX_MASK;
-                GPIO_PORTB_PCTL_R &= ~GPIO_PCTL_PB0_U1RX ;
 
-                poll_table[last_phase] = 0;
-                last_phase +=1;
             }
-
-            if(last_phase == 512)
+            else
             {
-                last_phase = 0;
-                displayUart0("last reached\r\n");
-                poll_req = false;
-                dmxTX();
-            }
+                UART1_IM_R &= ~UART_IM_TXIM;
+                GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK);
+                GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX);
 
-        }
-        else
-        {
-            UART1_IM_R &= ~UART_IM_TXIM;
-            GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK);
-            GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX);
+                while (UART1_FR_R & UART_FR_BUSY);
+                if (on)
+                {
+                    DE = 0;
+                   dmxTX();
 
-            while (UART1_FR_R & UART_FR_BUSY);
-            if (on)
-            {
-                DE = 0;
-               dmxTX();
-
+                }
             }
         }
+//        else if(polled)
+//        {
+//            GPIO_PORTB_AFSEL_R &= ~UART_TX_MASK;
+//            GPIO_PORTB_PCTL_R &= ~GPIO_PCTL_PB1_U1TX;
+//            UART1_IM_R &= ~UART_IM_TXIM;
+//            UART1_ICR_R |= UART_ICR_TXIC;
+//
+//            DE = 1;
+//            D = 0;
+//            waitMicrosecond(8);
+//            DE = 0;
+//
+//            GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
+//            GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB0_U1RX;
+//            UART1_IM_R |= UART_IM_RXIM;
+//
+//
+//        }
     }
     else if(UART1_MIS_R & UART_MIS_RXMIS)
     {
-        //LED_TIMEOUT_OFF = 10;
-        data = UART1_DR_R;
-        if(data & UART_DR_BE)
+        if(!polledC)
         {
-            if(poll_req == true) last_rx_phase++;
-
-            if(last_rx_phase == 512)
+            data = UART1_DR_R;
+            if(data & UART_DR_BE)
             {
-               poll_req = false;
-               last_rx_phase = 0;
+                if(!poll_req)
+                {
+                   setRgbColor(data_table[add]);
+                }
+
+                rx_phase = 0;
             }
 
-            if(!poll_req)
+            else
             {
-               setRgbColor(data_table[add]);
+
+                if( rx_phase < (max +1) )
+                {
+                   data_table[rx_phase] = data;
+
+                   if(data_table[rx_phase] == 247 && rx_phase == 0)
+                   {
+                      poll_req = true;
+                      //GREEN_FLAG = 1;
+                   }
+                   else if(data_table[rx_phase] == 0 && rx_phase == 0)
+                   {
+                       poll_req = false;
+
+                       //GREEN_FLAG = 0;
+
+                       if(LED_OFF_FLAG == 0)
+                       {
+                           LED_TIMEOUT_ON = 40;
+                           RED_LED = 0;
+                           LED_OFF_FLAG = 1;
+                       }
+
+                   }
+
+                   rx_phase++;
+
+                   if (rx_phase == 512)
+                   {
+
+                       if( (data_table[add] == 1) && (poll_req == true) )
+                       {
+    //                     LED_TIMEOUT_OFF = 20;
+    //                     GREEN_LED = 1;
+    //
+                         sprintf(str,"Sending Ack from %d\r\n",add);
+                         displayUart0(str);
+                         polled = true;
+                         GPIO_PORTB_AFSEL_R &= ~(UART_RX_MASK | UART_TX_MASK);
+                         GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB0_U1RX | GPIO_PCTL_PB1_U1TX);
+                         UART1_IM_R &= ~ (UART_IM_RXIM | UART_IM_TXIM);
+                         //UART1_ICR_R |= UART_ICR_RXIC;
+//                         GPIO_PORTB_AFSEL_R |= UART_TX_MASK;
+//                         GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX;
+//                         UART1_DR_R = 0;
+//                         UART1_IM_R |= UART_IM_TXIM;
+                         TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+                         TIMER1_TAILR_R = 640;
+                         TIMER1_IMR_R |= TIMER_IMR_TATOIM;
+                         TIMER1_CTL_R |= TIMER_CTL_TAEN;
+                       }
+                   }
+
+                }
             }
-            rx_phase = 0;
         }
 
-        else
+        else if(polledC)
         {
-            if(data_table[rx_phase] == 247 && rx_phase == 0)
+            DE = 0;
+            poll_data = UART1_DR_R;
+            if(poll_data & UART_DR_BE)
             {
-               poll_req = true;
+              device_address[last_phase] = last_phase;
             }
+            GPIO_PORTB_AFSEL_R &= ~( UART_RX_MASK | UART_TX_MASK);
+            GPIO_PORTB_PCTL_R &= ~( GPIO_PCTL_PB0_U1RX | GPIO_PCTL_PB1_U1TX);
+            UART1_IM_R &= ~( UART_IM_RXIM | UART_IM_TXIM );
+            UART1_ICR_R |= UART_ICR_RXIC | UART_ICR_TXIC;
 
-
-            if( rx_phase < (max+1) )
-            {
-               data_table[rx_phase] = data;
-
-                 rx_phase++;
-
-               if(rx_phase == 512)
-               {
-                   displayUart0("success\r\n");
-               }
-
-               if(rx_phase == 494)
-               {
-                   if( (data_table[add] == 1) && (poll_req == true) )
-                    {
-                       displayUart0("success\r\n");
-                       GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK | UART_RX_MASK);
-                       GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX | GPIO_PCTL_PB0_U1RX);
-                       UART1_IM_R &= ~UART_IM_RXIM;
-                       waitMicrosecond(16);
-
-                       DE = 1;
-                       D = 0;
-                       waitMicrosecond(8);
-
-                       DE = 0;
-                       GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
-                       GPIO_PORTB_PCTL_R  |= GPIO_PCTL_PB0_U1RX;
-                       UART1_IM_R |= UART_IM_RXIM;
-                    }
-               }
-
-            }
+            poll_table[last_phase] = 0;
+            last_phase++;
+            req_poll();
         }
+
     }
+
 }
 
 void Timer2Isr()
@@ -619,62 +693,138 @@ void Timer2Isr()
       if(LED_TIMEOUT_OFF > 0)
       {
          LED_TIMEOUT_OFF--;
-         BLUE_LED ^= 1;
          if(LED_TIMEOUT_OFF == 0)
          {
-             BLUE_LED = 0;
+             if(GREEN_FLAG1 == 0)
+             {
+                 BLUE_LED = 0;
+                 LED_OFF_FLAG = 0;
+             }
+             else if(GREEN_FLAG1 == 1)
+             {
+                 GREEN_LED = 0;
+                 //LED_TIMEOUT_ON = 20;
+             }
          }
       }
+
+      if(LED_TIMEOUT_GREEN > 0)
+      {
+         LED_TIMEOUT_GREEN--;
+         if(LED_TIMEOUT_GREEN == 0)
+         {
+                 GREEN_LED = 0;
+                 //LED_TIMEOUT_ON = 20;
+
+         }
+      }
+
+      if(LED_TIMEOUT_ON > 0)
+      {
+          LED_TIMEOUT_ON--;
+          if(LED_TIMEOUT_ON == 0)
+          {
+              if(GREEN_FLAG1 == 0)
+              {
+                 BLUE_LED = 1;
+                 LED_TIMEOUT_OFF = 1;
+              }
+              else if(GREEN_FLAG1 == 1)
+              {
+                  GREEN_LED = 1;
+                  //LED_TIMEOUT_OFF = 20;
+              }
+          }
+      }
   }
-//  if(mode == 0xFFFFFFFF)
-//  {
-//      if(LED_TIMEOUT_ON > 0)
-//      {
-//         LED_TIMEOUT_ON--;
-//         RED_LED ^= 1;
-//         if(LED_TIMEOUT_ON == 0)
-//         {
-//             RED_LED = 0;
-////             LED_TIMEOUT_OFF = 10;
-//             //TIMER2_IMR_R &= ~TIMER_IMR_TATOIM;
-////             TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
-//         }
-//      }
-//  }
+  if(mode == 0xFFFFFFFF)
+  {
+      if(LED_TIMEOUT_OFF > 0)
+      {
+         LED_TIMEOUT_OFF--;
+         if(LED_TIMEOUT_OFF == 0)
+         {
+             if(GREEN_FLAG == 0)
+             {
+                 RED_LED = 0;
+                 LED_OFF_FLAG = 0;
+             }
+             else if(GREEN_FLAG == 1)
+             {
+                 GREEN_LED = 0;
+
+             }
+         }
+      }
+
+      if(LED_TIMEOUT_ON > 0)
+      {
+          LED_TIMEOUT_ON--;
+          if(LED_TIMEOUT_ON == 0)
+          {
+              if(GREEN_FLAG == 0)
+              {
+                  RED_LED = 1;
+                  LED_TIMEOUT_OFF = 40;
+              }
+              else if(GREEN_FLAG == 1)
+              {
+                  GREEN_LED = 1;
+
+              }
+          }
+      }
+  }
   TIMER2_ICR_R = TIMER_ICR_TATOCINT;   //clearing the interrupt flag for timer
 }
 
 void hibernationIsr()
 {
-    NVIC_EN1_R &= ~(1 << (INT_HIBERNATE -16 - 32));
+
+    HIB_IC_R |= HIB_IC_RTCALT0;
+
     data_table[sortedArray[0][1]] = sortedArray[0][2];
     uint32_t j = 0;
     if(sortedArray[0][0] !=0 )
     {
-        for(j = 0; j<512; j++)
+        for(j = 0; j < 3; j++)
         {
             sortedArray[j][0] = sortedArray[j+1][0];
             sortedArray[j][1] = sortedArray[j+1][1];
             sortedArray[j][2] = sortedArray[j+1][2];
-            if(j == 511)
-            {
-                sortedArray[j][0] = 0;
-                sortedArray[j][1] = 0;
-                sortedArray[j][2] = 0;
-                break;
-            }
         }
     }
-    HIB_IC_R |= HIB_IC_RTCALT0;
+
+    sortedArray[3][0] = 0;
+    sortedArray[3][1] = 0;
+    sortedArray[3][2] = 0;
+
+    setAlarm(sortedArray[0][0]);
+
 }
 
 void clear()
 {
     uint32_t k=0;
-    for(k=0; k<512; k++){
+    for(k=0; k<512; k++)
+    {
         data_table[k]=0;
     }
     //putsUart0("Data table cleared successfully.\r\n");
+}
+
+void req_poll()
+{
+    poll_req = true;
+    poll_table[last_phase] = 1;
+    dmxTX();
+    if(last_phase == 512)
+    {
+        last_phase = 0;
+        displayUart0("last reached\r\n");
+        poll_req = false;
+        dmxTX();
+    }
 }
 //-----------------------------------------------------------------------------
 // Main
@@ -717,17 +867,24 @@ int main(void)
         }
         //RED_LED = 1;
         initPWM();
+        initTimer1();
+        TIMER1_IMR_R &= ~TIMER_IMR_TATOIM;
+        TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
         GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
         GPIO_PORTB_PCTL_R  |= GPIO_PCTL_PB0_U1RX;
         UART1_IM_R |= UART_IM_RXIM;
         DE = 0;
 
         displayUart0("Device Mode entered\r\n");
+
+        initTimer2();
     }
 
     else if(mode == 1)
     {
         displayUart0("Controller mode was entered\r\n");
+        initTimer2();
+        LED_OFF_FLAG = 0;
         if(on)
         {
            RED_LED = 1;
@@ -749,6 +906,7 @@ int main(void)
        parseFields(&data);
 
        bool valid = false;
+
 
        if(isCommand(&data, "set", 2))
        {
@@ -806,9 +964,9 @@ int main(void)
            if(mode == 1)
            {
                clear();
-                on = false;
-                dmxTX();
-                on = true;
+                //on = false;
+                //dmxTX();
+                //on = true;
                 req_poll();
                 valid = true;
            }
@@ -853,21 +1011,28 @@ int main(void)
        {
            uint32_t add = getFieldInteger(&data, 1);
            uint32_t value = getFieldInteger(&data, 2);
-           //data_table[add]=value;
+
            set_time(getFieldInteger(&data, 3),getFieldInteger(&data, 4),getFieldInteger(&data, 5));
            set_date(getFieldInteger(&data, 6),getFieldInteger(&data, 7));
-           n = calculateSeconds(hr, min ,sec, day, month);
-           addToSortedList(n, add, value, sortedArray);
-           sortArray(sortedArray);
-           if(n <= sortedArray[0][0] || sortedArray[0][0] == 0)
-           {
-              NVIC_EN1_R |= (1 << (INT_HIBERNATE -16 - 32));
-              HIB_IM_R |= HIB_IM_RTCALT0;
-           }
 
-//           while(!(HIB_CTL_R & 0x80000000));
-//           HIB_RTCM0_R = sortedArray[0][0];
-//           while(!(HIB_CTL_R & 0x80000000));
+           n = calculateSeconds(hr, min ,sec, day, month);
+
+           addToSortedList(n, add, value, sortedArray);
+
+           sortArray(sortedArray);
+
+           while(!(HIB_CTL_R & 0x80000000));
+           HIB_RTCM0_R = sortedArray[0][0];
+
+           uint8_t i = 0;
+           for( i =0; i<4; i++)
+           {
+//               if(sortedArray[i][0] != 0)
+//               {
+                   sprintf(str, "%d\r\n",sortedArray[i][0]);
+                   displayUart0(str);
+               //}
+           }
 
            valid = true;
        }
@@ -901,6 +1066,7 @@ int main(void)
        }
 
        displayUart0("\r\n");
+
 
        if(!valid)
            displayUart0("Invalid Command\r\n");
