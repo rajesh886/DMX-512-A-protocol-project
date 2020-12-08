@@ -7,5 +7,5 @@
 
 void initTimer1();
 void initTimer2();
-void initTimer3();
+
 #endif
