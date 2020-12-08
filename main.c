@@ -49,8 +49,8 @@ uint8_t LED_TIMEOUT_GREEN = 0;
 uint16_t LED_TIMEOUT_OFF = 0;
 uint16_t LED_TIMEOUT_ON = 0;
 uint32_t data_table[513];           //table for storing the data. max address is 512
-uint32_t poll_table[512];
-uint32_t device_address[512];
+uint32_t poll_table[513];
+uint32_t device_address[513];
 char str[100];
 uint32_t max = 513;                 //maximum address
 bool on = true;
@@ -169,14 +169,12 @@ void getsUart0(USER_DATA* data)
 
     char c;
     c = getcUart0();
-    if(mode == 1)
+
+    if(mode == 1)               //if the device is in controller mode
     {
-        if(LED_OFF_FLAG == 0)
-        {
-            LED_TIMEOUT_ON = 1;
-            BLUE_LED = 0;
-            LED_OFF_FLAG = 1;
-        }
+        BLUE_LED = 1;           //turn on the blue LED
+
+        LED_TIMEOUT_OFF = 5;    //Wait for the blue LED to turn off
     }
 
     if(c==127||c==8)  //checking if the character entered is DEL or backspace
@@ -384,60 +382,61 @@ bool isCommand(USER_DATA* data, const char strCommand[], uint8_t minArguments)
   return false;
 }
 
-void setMode(){
+void setMode()
+{
     writeEeprom(0,1);
 }
 
-void setAdd(uint32_t mode_num, uint32_t add){
+void setAdd(uint32_t mode_num, uint32_t add)
+{
     writeEeprom(0, mode_num);
     writeEeprom(1, add);
 }
 
+//this function prints the character to the screen using the UART0 Interrupt
 void displayUart0(char str[])
 {
-    //buffer is full if wr_idx == rd_idx
-    bool full;
+
+    bool full;                                  //buffer is full if wr_idx == rd_idx
+
     full = ((wr_idx+1) % N) == rd_idx;
+
     if(!full)
     {
-        //write into the buffer until the char is null;
-        while (str[wr_idx] != '\0')
+
+        while (str[wr_idx] != '\0')             //write into the buffer until the char is null;
         {
            txbuffer[wr_idx] = str[wr_idx];
+
            wr_idx++;
         }
-        if(UART0_FR_R & UART_FR_TXFE) //checking to see if the fifo is empty
+        if(UART0_FR_R & UART_FR_TXFE)           //check if the FIFO is empty
         {
-           UART0_DR_R = txbuffer[rd_idx] ;
+           UART0_DR_R = txbuffer[rd_idx] ;      //if empty, write the data into the data register to create an interrupt.
+
            rd_idx++;
         }
 
-        UART0_IM_R |= UART_IM_TXIM;  //Turning on the interrupt for uart0Isr.
+        UART0_IM_R |= UART_IM_TXIM;            //Turn on the interrupt for uart0Isr.
     }
 }
 
 void uart0RxIsr()
 {
-    if(UART0_FR_R & UART_FR_TXFE) //transition of fifo from non-empty to empty
+    if(UART0_FR_R & UART_FR_TXFE)               //transition of fifo from non-empty to empty
     {
-        UART0_DR_R = txbuffer[rd_idx] ;
-//        if(mode == 1)
-//        {
-//            if(LED_OFF_FLAG == 0)
-//            {
-//                LED_TIMEOUT_ON = 10;
-//                BLUE_LED = 0;
-//                LED_OFF_FLAG = 1;
-//            }
-//            initTimer2();
-//        }
+        UART0_DR_R = txbuffer[rd_idx] ;         //write the value to the data register from the ring buffer
+
         rd_idx++;
-        if(rd_idx == wr_idx)
+
+        if(rd_idx == wr_idx)                    //if read index and write index are equal
         {
-            LED_OFF_FLAG = 0;
-            UART0_IM_R &= ~UART_IM_TXIM;
-            rd_idx = 0;
-            wr_idx=0;
+
+            UART0_IM_R &= ~UART_IM_TXIM;        //turn off the interrupt
+
+            rd_idx = 0;                         //reset the read index
+
+            wr_idx=0;                           //reset the write index
         }
      }
 }
@@ -445,55 +444,64 @@ void uart0RxIsr()
 void dmxTX()
 {
     DE = 1;                            // enabling the PC7 pin high
-    D = 0;       //transmitting break condition '0' for 176 us.
-    phase = 0;
-    initTimer1();
+
+    D = 0;                             //transmitting break condition '0'
+
+    phase = 0;                         //first phase is 0 for sending break
+
+    initTimer1();                      //Break is transferred for 176us. Causes Frame Error and Break Error in receiver called "synchronization event"
 }
 
 void Timer1Isr()
 {
-    if(mode == 1)
+    if(mode == 1)                                   //if the device mode is controller
     {
-        if(phase == 0)
+        if(phase == 0)                              //if the device is done sending the break
         {
-            D = 1;    //transmitting 1 for 12 us.
+            D = 1;                                  //transmit mark after break(MAB) "1" for 12us
+
             TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
-            TIMER1_TAILR_R = 480;
+
+            TIMER1_TAILR_R = 480;                   //timer is re-enabled for 12 us
+
             TIMER1_CTL_R |= TIMER_CTL_TAEN;
-            phase = 1;
+
+            phase = 1;                              //increase the phase
         }
         else if(phase == 1)
         {
-            //Turning off timer
             TIMER1_IMR_R &= ~TIMER_IMR_TATOIM;
-            TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
-            TIMER1_TAILR_R = 7040;
 
-            //UART1 AFSEL and PCTL on
-            //only transmit is enabled if the device is in the controller mode.
-            GPIO_PORTB_AFSEL_R |= UART_TX_MASK ;
+            TIMER1_CTL_R &= ~TIMER_CTL_TAEN;       //Turning off timer
+
+            TIMER1_TAILR_R = 7040;                 //reload the value in timer to configure the timer for 176us for sending the break once the controller is done sending 512 values
+
+            GPIO_PORTB_AFSEL_R |= UART_TX_MASK ;                //UART1 AFSEL and PCTL on
+                                                                //only transmit is enabled if the device is in the controller mode.
+
             GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX ;
 
-            //writing start code
-            if(!poll_req)
+
+            if(!poll_req)                               //if the poll has not been requested
             {
               //GREEN_FLAG1 = 0;
-              UART1_DR_R = 0;
+
+              UART1_DR_R = 0;                           //write start code of 0
             }
 
-            if(poll_req)
+            if(poll_req)                               //if the controller requests the poll
             {
                 //GREEN_FLAG1 = 1;
-                while (UART1_FR_R & UART_FR_TXFF);
-                UART1_DR_R  = 0xF7;
+
+                UART1_DR_R  = 0xF7;                     //write start code of 0xF7
             }
 
-            //turning on the interrupt for UART1Isr
-            UART1_IM_R |= UART_IM_TXIM;
+            UART1_IM_R |= UART_IM_TXIM;                 //turn on the transmit interrupt for UART1Isr
 
-            phase = 2;
+            phase = 2;                                  //phase gets incremented to 2 after sending start code to the device
         }
-        TIMER1_ICR_R = TIMER_ICR_TATOCINT;   //clearing the interrupt flag for timer
+
+        TIMER1_ICR_R = TIMER_ICR_TATOCINT;              //clear the interrupt flag for timer
     }
     else if(mode == 0xFFFFFFFF && polled == true)
     {
@@ -529,21 +537,24 @@ void uart1Isr()
     {
         if(!polled)
         {
-            if(((phase-2)< (max+1)) && !poll_req)
+            if(((phase-1)< (max+2)) && !poll_req)
             {
                while (UART1_FR_R & UART_FR_TXFF);
-               UART1_DR_R = data_table[phase-2];
+               UART1_DR_R = data_table[phase-1];
                phase++;
             }
-            else if(((phase-2) < (max+1)) && poll_req)
+            else if(((phase-1) < (max+2)) && poll_req)
             {
                 while (UART1_FR_R & UART_FR_TXFF);
-                UART1_DR_R = poll_table[phase-2];
+                UART1_DR_R = poll_table[phase-1];
                 phase++;
 
-                if((phase-2) == 513)
+                if((phase-2) == 514)
                 {
                     UART1_ECR_R = 0;
+                    UART1_ICR_R |= UART_ICR_FEIC;
+                    UART1_ICR_R |= UART_ICR_BEIC;
+                    //UART1_ICR_R |= UART_ICR_OEIC;
                     polledC = true;
                     GPIO_PORTB_AFSEL_R &= ~(UART_TX_MASK);
                     GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB1_U1TX);
@@ -571,24 +582,6 @@ void uart1Isr()
                 }
             }
         }
-//        else if(polled)
-//        {
-//            GPIO_PORTB_AFSEL_R &= ~UART_TX_MASK;
-//            GPIO_PORTB_PCTL_R &= ~GPIO_PCTL_PB1_U1TX;
-//            UART1_IM_R &= ~UART_IM_TXIM;
-//            UART1_ICR_R |= UART_ICR_TXIC;
-//
-//            DE = 1;
-//            D = 0;
-//            waitMicrosecond(8);
-//            DE = 0;
-//
-//            GPIO_PORTB_AFSEL_R |= UART_RX_MASK;
-//            GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB0_U1RX;
-//            UART1_IM_R |= UART_IM_RXIM;
-//
-//
-//        }
     }
     else if(UART1_MIS_R & UART_MIS_RXMIS)
     {
@@ -608,14 +601,14 @@ void uart1Isr()
             else
             {
 
-                if( rx_phase < (max +1) )
+                if( rx_phase < (max +2) )
                 {
                    data_table[rx_phase] = data;
 
                    if(data_table[rx_phase] == 247 && rx_phase == 0)
                    {
                       poll_req = true;
-                      //GREEN_FLAG = 1;
+
                    }
                    else if(data_table[rx_phase] == 0 && rx_phase == 0)
                    {
@@ -626,7 +619,7 @@ void uart1Isr()
                        if(LED_OFF_FLAG == 0)
                        {
                            LED_TIMEOUT_ON = 40;
-                           RED_LED = 0;
+                           GREEN_LED = 0;
                            LED_OFF_FLAG = 1;
                        }
 
@@ -634,25 +627,23 @@ void uart1Isr()
 
                    rx_phase++;
 
-                   if (rx_phase == 512)
+                   if (rx_phase == 513)
                    {
 
                        if( (data_table[add] == 1) && (poll_req == true) )
                        {
-    //                     LED_TIMEOUT_OFF = 20;
-    //                     GREEN_LED = 1;
-    //
+                         GREEN_FLAG = 1;
+
+                         RED_LED = 1;
+                         LED_TIMEOUT_OFF = 60;
+                         GREEN_FLAG = 0;
                          sprintf(str,"Sending Ack from %d\r\n",add);
                          displayUart0(str);
                          polled = true;
                          GPIO_PORTB_AFSEL_R &= ~(UART_RX_MASK | UART_TX_MASK);
                          GPIO_PORTB_PCTL_R &= ~(GPIO_PCTL_PB0_U1RX | GPIO_PCTL_PB1_U1TX);
                          UART1_IM_R &= ~ (UART_IM_RXIM | UART_IM_TXIM);
-                         //UART1_ICR_R |= UART_ICR_RXIC;
-//                         GPIO_PORTB_AFSEL_R |= UART_TX_MASK;
-//                         GPIO_PORTB_PCTL_R |= GPIO_PCTL_PB1_U1TX;
-//                         UART1_DR_R = 0;
-//                         UART1_IM_R |= UART_IM_TXIM;
+
                          TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
                          TIMER1_TAILR_R = 640;
                          TIMER1_IMR_R |= TIMER_IMR_TATOIM;
@@ -666,19 +657,29 @@ void uart1Isr()
 
         else if(polledC)
         {
+            while (UART1_FR_R & UART_FR_BUSY);
             DE = 0;
-            poll_data = UART1_DR_R;
-            if(poll_data & UART_DR_BE)
+            //D = 1;
+            waitMicrosecond(200);
+
+            //poll_data = UART1_DR_R;
+            if(UART1_DR_R & UART_DR_BE)
             {
-              device_address[last_phase] = last_phase;
+              if(UART1_RIS_R & UART_RIS_BERIS)
+              {
+                 UART1_ICR_R |= UART_ICR_OEIC;
+                 device_address[last_phase] = last_phase;
+                 GREEN_LED = 1;
+                 LED_TIMEOUT_ON = 40;
+                 sprintf(str,"Device with address %d has been found on the bus.\r\n",last_phase);
+                 displayUart0(str);
+              }
             }
             GPIO_PORTB_AFSEL_R &= ~( UART_RX_MASK | UART_TX_MASK);
             GPIO_PORTB_PCTL_R &= ~( GPIO_PCTL_PB0_U1RX | GPIO_PCTL_PB1_U1TX);
             UART1_IM_R &= ~( UART_IM_RXIM | UART_IM_TXIM );
             UART1_ICR_R |= UART_ICR_RXIC | UART_ICR_TXIC;
 
-            poll_table[last_phase] = 0;
-            last_phase++;
             req_poll();
         }
 
@@ -686,6 +687,7 @@ void uart1Isr()
 
 }
 
+//This Isr controls the blinking of LEDs on the board.
 void Timer2Isr()
 {
   if(mode == 1)
@@ -698,24 +700,13 @@ void Timer2Isr()
              if(GREEN_FLAG1 == 0)
              {
                  BLUE_LED = 0;
-                 LED_OFF_FLAG = 0;
-             }
-             else if(GREEN_FLAG1 == 1)
-             {
                  GREEN_LED = 0;
-                 //LED_TIMEOUT_ON = 20;
              }
-         }
-      }
-
-      if(LED_TIMEOUT_GREEN > 0)
-      {
-         LED_TIMEOUT_GREEN--;
-         if(LED_TIMEOUT_GREEN == 0)
-         {
-                 GREEN_LED = 0;
-                 //LED_TIMEOUT_ON = 20;
-
+//             else if(GREEN_FLAG1 == 1)
+//             {
+//                 GREEN_LED = 0;
+//                 //LED_TIMEOUT_ON = 20;
+//             }
          }
       }
 
@@ -746,14 +737,15 @@ void Timer2Isr()
          {
              if(GREEN_FLAG == 0)
              {
-                 RED_LED = 0;
-                 LED_OFF_FLAG = 0;
-             }
-             else if(GREEN_FLAG == 1)
-             {
                  GREEN_LED = 0;
-
+                 LED_OFF_FLAG = 0;
+                 RED_LED = 0;
              }
+//             else if(GREEN_FLAG == 1)
+//             {
+//                 GREEN_LED = 0;
+//
+//             }
          }
       }
 
@@ -764,13 +756,8 @@ void Timer2Isr()
           {
               if(GREEN_FLAG == 0)
               {
-                  RED_LED = 1;
-                  LED_TIMEOUT_OFF = 40;
-              }
-              else if(GREEN_FLAG == 1)
-              {
                   GREEN_LED = 1;
-
+                  LED_TIMEOUT_OFF = 40;
               }
           }
       }
@@ -806,7 +793,7 @@ void hibernationIsr()
 void clear()
 {
     uint32_t k=0;
-    for(k=0; k<512; k++)
+    for(k=0; k<513; k++)
     {
         data_table[k]=0;
     }
@@ -816,12 +803,14 @@ void clear()
 void req_poll()
 {
     poll_req = true;
+    poll_table[last_phase] = 0;
+    last_phase++;
     poll_table[last_phase] = 1;
     dmxTX();
-    if(last_phase == 512)
+    if(last_phase == 513)
     {
         last_phase = 0;
-        displayUart0("last reached\r\n");
+
         poll_req = false;
         dmxTX();
     }

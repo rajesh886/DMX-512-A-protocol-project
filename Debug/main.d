@@ -20,7 +20,6 @@ main.obj: ../eeprom.h
 main.obj: ../uart1.h
 main.obj: ../timer.h
 main.obj: ../wait.h
-main.obj: ../polling.h
 
 ../main.c: 
 /Applications/ti/ccs/tools/compiler/ti-cgt-arm_20.2.1.LTS/include/stdint.h: 
@@ -42,4 +41,3 @@ main.obj: ../polling.h
 ../uart1.h: 
 ../timer.h: 
 ../wait.h: 
-../polling.h: 
